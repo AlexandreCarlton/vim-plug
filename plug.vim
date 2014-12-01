@@ -898,24 +898,24 @@ while 1 " Without TCO, Vim stack is bound to explode
   call s:log(new ? '+' : '*', name, pull ? 'Updating ...' : 'Installing ...')
   redraw
 
-  let executables = s:missing_executables(spec.needs)
-  if !empty(executables)
-    let msg = 'Please install '. join(executables, ', ') . '.'
-    let s:jobs[name] = { 'running': 0, 'result': msg, 'error': 1 }
-  else
-    if !new
-      let [valid, msg] = s:git_valid(spec, 0)
-      if valid
-        if pull
-          call s:spawn(name,
-            \ printf('git checkout -q %s 2>&1 && git pull --progress --no-rebase origin %s 2>&1 && git submodule update --init --recursive 2>&1',
-            \ s:shellesc(spec.branch), s:shellesc(spec.branch)), { 'dir': spec.dir })
-        else
-          let s:jobs[name] = { 'running': 0, 'result': 'Already installed', 'error': 0 }
-        endif
+  if !new
+    let [valid, msg] = s:git_valid(spec, 0)
+    if valid
+      if pull
+        call s:spawn(name,
+          \ printf('git checkout -q %s 2>&1 && git pull --progress --no-rebase origin %s 2>&1 && git submodule update --init --recursive 2>&1',
+          \ s:shellesc(spec.branch), s:shellesc(spec.branch)), { 'dir': spec.dir })
       else
-        let s:jobs[name] = { 'running': 0, 'result': msg, 'error': 1 }
+        let s:jobs[name] = { 'running': 0, 'result': 'Already installed', 'error': 0 }
       endif
+    else
+      let s:jobs[name] = { 'running': 0, 'result': msg, 'error': 1 }
+    endif
+  else
+    let executables = s:missing_executables(spec.needs)
+    if !empty(executables)
+      let msg = 'Please install '. join(executables, ', ') . '.'
+      let s:jobs[name] = { 'running': 0, 'result': msg, 'error': 1 }
     else
       call s:spawn(name,
             \ printf('git clone --progress --recursive %s -b %s %s 2>&1',
@@ -1113,41 +1113,41 @@ function! s:update_ruby()
           branch = esc branch
           subm = "git submodule update --init --recursive 2>&1"
           exists = File.directory? dir
-          needs = needs.kind_of?(Array) ? needs : [needs]
-          executables = needs.select{ |exe| !which exe }
           ok, result =
-            if executables.empty?
-              if exists
-                dir = esc dir
-                ret, data = bt.call "#{cd} #{dir} && git rev-parse --abbrev-ref HEAD 2>&1 && git config remote.origin.url", nil, nil, nil
-                current_uri = data.lines.to_a.last
-                if !ret
-                  if data =~ /^Interrupted|^Timeout/
-                    [false, data]
-                  else
-                    [false, [data.chomp, "PlugClean required."].join($/)]
-                  end
-                elsif current_uri.sub(/git::?@/, '') != uri.sub(/git::?@/, '')
-                  [false, ["Invalid URI: #{current_uri}",
-                           "Expected:    #{uri}",
-                           "PlugClean required."].join($/)]
+            if exists
+              dir = esc dir
+              ret, data = bt.call "#{cd} #{dir} && git rev-parse --abbrev-ref HEAD 2>&1 && git config remote.origin.url", nil, nil, nil
+              current_uri = data.lines.to_a.last
+              if !ret
+                if data =~ /^Interrupted|^Timeout/
+                  [false, data]
                 else
-                  if pull
-                    log.call name, 'Updating ...', :update
-                    bt.call "#{cd} #{dir} && git checkout -q #{branch} 2>&1 && (git pull --no-rebase origin #{branch} #{progress} 2>&1 && #{subm})", name, :update, nil
-                  else
-                    [true, skip]
-                  end
+                  [false, [data.chomp, "PlugClean required."].join($/)]
                 end
+              elsif current_uri.sub(/git::?@/, '') != uri.sub(/git::?@/, '')
+                [false, ["Invalid URI: #{current_uri}",
+                         "Expected:    #{uri}",
+                         "PlugClean required."].join($/)]
               else
+                if pull
+                  log.call name, 'Updating ...', :update
+                  bt.call "#{cd} #{dir} && git checkout -q #{branch} 2>&1 && (git pull --no-rebase origin #{branch} #{progress} 2>&1 && #{subm})", name, :update, nil
+                else
+                  [true, skip]
+                end
+              end
+            else
+              needs = needs.kind_of?(Array) ? needs : [needs]
+              executables = needs.select{ |exe| !which exe }
+              if executables.empty?
                 d = esc dir.sub(%r{[\\/]+$}, '')
                 log.call name, 'Installing ...', :install
                 bt.call "git clone #{progress} --recursive #{uri} -b #{branch} #{d} 2>&1", name, :install, proc {
                   FileUtils.rm_rf dir
                 }
+              else
+                [false, "Please install " + executables.join(", ") + " first."]
               end
-            else
-              [false, "Please install " + executables.join(", ") + " first."]
             end
           mtx.synchronize { VIM::command("let s:update.new['#{name}'] = 1") } if !exists && ok
           log.call name, result, ok
